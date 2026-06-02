@@ -1,0 +1,21 @@
+/* Copyright (C) 2025 Alif Semiconductor - All Rights Reserved.
+ * E8 DevKit HE overlay for alif_kws (PDM mic @4902d000 + U55-128 NPU)
+ * E8 DevKit mic is on PDM (pdm@4902d000), NOT LPPDM (per Alif/Teppo).
+ */
+/ {
+	aliases {
+		pdm-audio = &pdm;
+	};
+};
+&pdm {
+	status = "okay";
+};
+/ {
+	ethosu_u55_check {
+		compatible = "vnd,ethosu-u55-check";
+		ethosu-node = <&ethosu0>;
+	};
+};
+&ethosu0 {
+	status = "okay";
+};

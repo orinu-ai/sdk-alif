@@ -26,13 +26,28 @@
 #include <string>
 
 static const char *labelsVec[] LABELS_ATTRIBUTE = {
-	"down",  "go",   "left", "no",  "off",       "on",
-	"right", "stop", "up",   "yes", "_silence_", "_unknown_",
+        "orinu", "home", "reader", "embosser",
+        "inkjet", "eyecam", "setting", "start",
+        "stop", "pause", "resume", "cancel",
+        "louder", "softer", "quiet", "mute",
+        "unmute", "status", "help", "play",
+        "next", "previous", "repeat", "emergency",
+        "test", "eject", "load", "front",
+        "back", "both", "yes", "no",
+        "shuffle", "timer", "alarm", "ask",
+        "connect", "sleep", "wake", "shutdown",
+        "read", "capture", "bookmark", "translate",
+        "summary", "speed_up", "slow_down", "color",
+        "draft", "quality", "duplex", "photo",
+        "describe", "zoom_in", "zoom_out", "record",
+        "detect", "identify", "call", "wifi",
+        "language", "volume", "update", "reset",
+        "_silence_", "_unknown_",
 };
 
 bool GetLabelsVector(std::vector<std::string> &labels)
 {
-	constexpr size_t labelsSz = 12;
+	constexpr size_t labelsSz = 66;
 	labels.clear();
 
 	if (!labelsSz) {
