@@ -25,6 +25,7 @@
 #include <vector>
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
+#include <zephyr/drivers/ipm.h>
 
 LOG_MODULE_REGISTER(UseCaseHandler);
 
@@ -63,6 +64,32 @@ using namespace arm::app::kws;
  * @return          true if successful, false otherwise.
  **/
 static bool PresentInferenceResult(const std::vector<arm::app::kws::KwsResult> &results);
+
+/* MHU0 (HE->HP): send recognized KWS keyword id to HP core */
+static const struct device *kws_mhu0_s = NULL;
+static uint32_t kws_last_sent = 0xFFFFFFFFu;
+static uint32_t kws_silence_run = 0u;
+
+static void kws_mhu_init(void)
+{
+	kws_mhu0_s = DEVICE_DT_GET(DT_NODELABEL(rtsshe_rtsshp_mhu0_s));
+	if (!device_is_ready(kws_mhu0_s)) {
+		LOG_ERR("MHU0 (HE->HP) not ready");
+		kws_mhu0_s = NULL;
+	} else {
+		LOG_INF("MHU0 (HE->HP) ready");
+	}
+}
+
+static void kws_send_to_hp(uint32_t kw_id)
+{
+	if (kws_mhu0_s == NULL) {
+		return;
+	}
+	uint32_t msg = kw_id + 1u; /* +1 so id 0 (orinu) sets a non-zero MHU doorbell bit */
+	ipm_send(kws_mhu0_s, 0, 0, &msg, sizeof(msg));
+	LOG_INF("KWS->HP sent kw_id=%u (wire=%u)", kw_id, msg);
+}
 
 /* KWS inference handler. */
 bool ClassifyAudioHandler(ApplicationContext &ctx, bool oneshot)
@@ -119,6 +146,13 @@ bool ClassifyAudioHandler(ApplicationContext &ctx, bool oneshot)
 	if (err) {
 		LOG_ERR("hal_audio_init failed with error: %d", err);
 		return false;
+	}
+
+	/* Init HE->HP MHU once (after audio is up) */
+	static bool s_mhu_inited = false;
+	if (!s_mhu_inited) {
+		kws_mhu_init();
+		s_mhu_inited = true;
 	}
 
 	// Start first fill of final stride section of buffer
@@ -198,6 +232,26 @@ static bool PresentInferenceResult(const std::vector<kws::KwsResult> &results)
 {
 	LOG_INF("Final results:");
 	LOG_INF("Total number of inferences: %zu", results.size());
+
+	/* Edge-detect on the NEWEST inference only:
+	 * send when the latest frame is a meaningful keyword AND the previous
+	 * latest frame was not that same keyword. This fires once per utterance
+	 * and re-fires when the keyword is spoken again after anything else. */
+	if (!results.empty()) {
+		uint32_t cur = 0xFFFFFFFFu; /* current newest meaningful kw, else sentinel */
+		if (!results.back().m_resultVec.empty()) {
+			uint32_t kwid = results.back().m_resultVec[0].m_labelIdx;
+			float sc = results.back().m_resultVec[0].m_normalisedVal;
+			if (kwid < 64u && sc >= 0.5f) {
+				cur = kwid;
+			}
+		}
+		if (cur != 0xFFFFFFFFu && cur != kws_last_sent) {
+			kws_send_to_hp(cur);
+		}
+		/* track the newest frame's keyword (sentinel if silence/none/low) */
+		kws_last_sent = cur;
+	}
 
 	for (const auto &result : results) {
 
