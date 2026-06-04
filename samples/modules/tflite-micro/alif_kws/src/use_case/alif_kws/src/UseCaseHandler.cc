@@ -67,8 +67,36 @@ static bool PresentInferenceResult(const std::vector<arm::app::kws::KwsResult> &
 
 /* MHU0 (HE->HP): send recognized KWS keyword id to HP core */
 static const struct device *kws_mhu0_s = NULL;
-static uint32_t kws_last_sent = 0xFFFFFFFFu;
-static uint32_t kws_silence_run = 0u;
+
+/* KWS post-processing (per KWS-team README) */
+#define KW_WAKE_TH       0.50f   /* orinu (idx 0) */
+#define KW_CMD_TH        0.60f   /* general commands */
+#define KW_CRIT_TH       0.90f   /* emergency(23)/shutdown(39)/reset(63) */
+#define KW_VAD_RMS       262.0f  /* int16: 0.008 * 32768 ~= 262 */
+#define KW_COOLDOWN_MS   1500
+static int64_t kws_last_time[66] = {0};
+static float kws_cur_rms = 0.0f;
+
+static float kw_threshold(uint32_t kwid)
+{
+	if (kwid == 0u) {
+		return KW_WAKE_TH;
+	}
+	if (kwid == 23u || kwid == 39u || kwid == 63u) {
+		return KW_CRIT_TH;
+	}
+	return KW_CMD_TH;
+}
+
+static float kws_window_rms(const int16_t *buf, int n)
+{
+	double acc = 0.0;
+	for (int i = 0; i < n; ++i) {
+		double v = (double)buf[i];
+		acc += v * v;
+	}
+	return (float)sqrt(acc / (double)n);
+}
 
 static void kws_mhu_init(void)
 {
@@ -178,6 +206,7 @@ bool ClassifyAudioHandler(ApplicationContext &ctx, bool oneshot)
 		audio_preprocessing(audio_inf + AUDIO_SAMPLES - AUDIO_STRIDE, AUDIO_STRIDE);
 
 		const int16_t *inferenceWindow = audio_inf;
+		kws_cur_rms = kws_window_rms(inferenceWindow, AUDIO_SAMPLES);
 
 		uint32_t start = k_cycle_get_32();
 		/* Run the pre-processing, inference and post-processing. */
@@ -233,24 +262,22 @@ static bool PresentInferenceResult(const std::vector<kws::KwsResult> &results)
 	LOG_INF("Final results:");
 	LOG_INF("Total number of inferences: %zu", results.size());
 
-	/* Edge-detect on the NEWEST inference only:
-	 * send when the latest frame is a meaningful keyword AND the previous
-	 * latest frame was not that same keyword. This fires once per utterance
-	 * and re-fires when the keyword is spoken again after anything else. */
-	if (!results.empty()) {
-		uint32_t cur = 0xFFFFFFFFu; /* current newest meaningful kw, else sentinel */
-		if (!results.back().m_resultVec.empty()) {
-			uint32_t kwid = results.back().m_resultVec[0].m_labelIdx;
-			float sc = results.back().m_resultVec[0].m_normalisedVal;
-			if (kwid < 64u && sc >= 0.5f) {
-				cur = kwid;
+	/* KWS post-processing per KWS-team README:
+	 * VAD (window RMS) + per-keyword threshold + per-keyword cooldown.
+	 * Uses the newest inference frame. */
+	if (!results.empty() && !results.back().m_resultVec.empty()) {
+		uint32_t kwid = results.back().m_resultVec[0].m_labelIdx;
+		float sc = results.back().m_resultVec[0].m_normalisedVal;
+		int64_t now = k_uptime_get();
+
+		if (kws_cur_rms >= KW_VAD_RMS &&     /* 1. VAD: window loud enough */
+		    kwid < 64u &&                    /* 2. ignore _silence_/_unknown_ */
+		    sc >= kw_threshold(kwid)) {      /* 3. per-keyword threshold */
+			if (now - kws_last_time[kwid] >= KW_COOLDOWN_MS) { /* 4. cooldown */
+				kws_send_to_hp(kwid);
+				kws_last_time[kwid] = now;
 			}
 		}
-		if (cur != 0xFFFFFFFFu && cur != kws_last_sent) {
-			kws_send_to_hp(cur);
-		}
-		/* track the newest frame's keyword (sentinel if silence/none/low) */
-		kws_last_sent = cur;
 	}
 
 	for (const auto &result : results) {
