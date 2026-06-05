@@ -33,11 +33,16 @@ static void recv_cb(const struct device *mhuv2_ipmdev, void *user_data,
 {
     ARG_UNUSED(mhuv2_ipmdev);
     ARG_UNUSED(user_data);
+    /* DEBUG(MHU 무결성 검증용, 운영 배포 시 제거 가능): HP 수신 누적 카운터. */
+    static uint32_t hp_rcvd = 0u;
     uint32_t wire = *((uint32_t *)data);
-    uint32_t kw_id = (wire > 0u) ? (wire - 1u) : 0xFFFFFFFFu; /* undo +1 encoding */
+    uint32_t lo = wire & 0xFFu;                 /* kw_id+1 */
+    uint32_t he_sent = (wire >> 8) & 0xFFFFFFu; /* HE 송신 카운터 */
+    uint32_t kw_id = (lo > 0u) ? (lo - 1u) : 0xFFFFFFFFu;
     const char *name = (kw_id < 66u) ? kw_labels[kw_id] : "?";
+    hp_rcvd++;
 
-    printk("RTSS-HP: KWS rcvd kw_id=%u (%s)\n", kw_id, name);
+    printk("RTSS-HP: kw_id=%u (%s) | HE_sent=%u HP_rcvd=%u\n", kw_id, name, he_sent, hp_rcvd);
     if (kw_id == 0u) {
         printk("RTSS-HP: >>> ORINU wake word! (camera trigger placeholder)\n");
     }

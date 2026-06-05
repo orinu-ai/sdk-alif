@@ -19,3 +19,8 @@
 &ethosu0 {
 	status = "okay";
 };
+
+/* SRAM1 for large tensor arena (Original KWS model ~219KB) */
+&sram1 {
+	status = "okay";
+};

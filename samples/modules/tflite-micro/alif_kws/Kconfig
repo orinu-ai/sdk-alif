@@ -12,11 +12,11 @@ config USE_APP_MENU
 
 config ACTIVATION_BUF_SECTION
 	string "Linker section where activation buffer (tensor arena) is placed"
-	default ".bss.activation_buf"
+	default "SRAM1.activation_buf"
 
 config ACTIVATION_BUF_SZ
 	hex "Tensor arena size"
-	default 0x20000
+	default 0x80000
 
 config MODEL_IN_EXT_FLASH
 	bool "Put ML model to external flash"

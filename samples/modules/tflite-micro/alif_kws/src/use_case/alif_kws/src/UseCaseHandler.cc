@@ -70,11 +70,12 @@ static const struct device *kws_mhu0_s = NULL;
 
 /* KWS post-processing (per KWS-team README) */
 #define KW_WAKE_TH       0.50f   /* orinu (idx 0) */
-#define KW_CMD_TH        0.60f   /* general commands */
+#define KW_CMD_TH        0.50f   /* general commands */
 #define KW_CRIT_TH       0.90f   /* emergency(23)/shutdown(39)/reset(63) */
 #define KW_VAD_RMS       262.0f  /* int16: 0.008 * 32768 ~= 262 */
 #define KW_COOLDOWN_MS   1500
-static int64_t kws_last_time[66] = {0};
+/* 발화 이벤트 검출 상태 */
+static int64_t kws_last_send = 0;             /* 전역 쿨다운 (A32 검증 방식) */
 static float kws_cur_rms = 0.0f;
 
 static float kw_threshold(uint32_t kwid)
@@ -86,6 +87,27 @@ static float kw_threshold(uint32_t kwid)
 		return KW_CRIT_TH;
 	}
 	return KW_CMD_TH;
+}
+
+/* eyeCAM: 프린터 전용 키워드 제외 (임시 블랙리스트, 최종 keyword set은 PM 확정 예정) */
+static bool kw_is_printer_only(uint32_t kwid)
+{
+	switch (kwid) {
+	case 3:  /* embosser */
+	case 4:  /* inkjet */
+	case 25: /* eject */
+	case 26: /* load */
+	case 27: /* front */
+	case 28: /* back */
+	case 29: /* both */
+	case 47: /* color */
+	case 48: /* draft */
+	case 49: /* quality */
+	case 50: /* duplex */
+		return true;
+	default:
+		return false;
+	}
 }
 
 static float kws_window_rms(const int16_t *buf, int n)
@@ -109,14 +131,19 @@ static void kws_mhu_init(void)
 	}
 }
 
+/* DEBUG(MHU 무결성 검증용, 운영 배포 시 제거 가능): HE 송신 누적 카운터.
+ * wire에 패킹되어 HP가 HE_sent vs HP_rcvd를 비교 가능. */
+static uint32_t kws_he_sent = 0u;
 static void kws_send_to_hp(uint32_t kw_id)
 {
 	if (kws_mhu0_s == NULL) {
 		return;
 	}
-	uint32_t msg = kw_id + 1u; /* +1 so id 0 (orinu) sets a non-zero MHU doorbell bit */
+	kws_he_sent++;
+	/* wire: [31:8]=sent counter, [7:0]=kw_id+1 */
+	uint32_t msg = ((kws_he_sent & 0xFFFFFFu) << 8) | ((kw_id + 1u) & 0xFFu);
 	ipm_send(kws_mhu0_s, 0, 0, &msg, sizeof(msg));
-	LOG_INF("KWS->HP sent kw_id=%u (wire=%u)", kw_id, msg);
+	LOG_INF("KWS->HP sent kw_id=%u (sent#%u)", kw_id, kws_he_sent);
 }
 
 /* KWS inference handler. */
@@ -233,6 +260,21 @@ bool ClassifyAudioHandler(ApplicationContext &ctx, bool oneshot)
 		LOG_INF("Postprocessing time = %.3f ms",
 		       (double)(k_cycle_get_32() - start) / sys_clock_hw_cycles_per_sec() * 1000);
 
+		/* Send gate (A32 dispatcher 검증 방식): VAD + threshold + 전역 쿨다운 1500ms.
+		 * 인식된 키워드를 통과시키고 중복만 시간으로 차단. 프린터 전용 키워드는 제외(eyeCAM). */
+		if (index >= 3 && !singleInfResult.empty()) {  /* skip first ~1.5s boot noise */
+			uint32_t kwid = singleInfResult[0].m_labelIdx;
+			float sc = singleInfResult[0].m_normalisedVal;
+			int64_t now = k_uptime_get();
+			if (kws_cur_rms >= KW_VAD_RMS &&
+			    kwid < 64u &&
+			    !kw_is_printer_only(kwid) &&
+			    sc >= kw_threshold(kwid) &&
+			    (now - kws_last_send) > 1500) {
+				kws_send_to_hp(kwid);
+				kws_last_send = now;
+			}
+		}
 		/* Add results from this window to our final results vector. */
 		if (infResults.size() == RESULTS_MEMORY) {
 			infResults.erase(infResults.begin());
@@ -262,23 +304,6 @@ static bool PresentInferenceResult(const std::vector<kws::KwsResult> &results)
 	LOG_INF("Final results:");
 	LOG_INF("Total number of inferences: %zu", results.size());
 
-	/* KWS post-processing per KWS-team README:
-	 * VAD (window RMS) + per-keyword threshold + per-keyword cooldown.
-	 * Uses the newest inference frame. */
-	if (!results.empty() && !results.back().m_resultVec.empty()) {
-		uint32_t kwid = results.back().m_resultVec[0].m_labelIdx;
-		float sc = results.back().m_resultVec[0].m_normalisedVal;
-		int64_t now = k_uptime_get();
-
-		if (kws_cur_rms >= KW_VAD_RMS &&     /* 1. VAD: window loud enough */
-		    kwid < 64u &&                    /* 2. ignore _silence_/_unknown_ */
-		    sc >= kw_threshold(kwid)) {      /* 3. per-keyword threshold */
-			if (now - kws_last_time[kwid] >= KW_COOLDOWN_MS) { /* 4. cooldown */
-				kws_send_to_hp(kwid);
-				kws_last_time[kwid] = now;
-			}
-		}
-	}
 
 	for (const auto &result : results) {
 
