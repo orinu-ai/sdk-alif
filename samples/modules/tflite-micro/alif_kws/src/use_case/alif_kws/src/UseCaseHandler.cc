@@ -210,6 +210,18 @@ bool ClassifyAudioHandler(ApplicationContext &ctx, bool oneshot)
 		s_mhu_inited = true;
 	}
 
+	// 부팅 직후 윈도우(audio_inf의 AUDIO_SAMPLES 본체)를 실제 오디오로 미리 채운다.
+	// 안 그러면 앞부분이 0(미충전)이라 첫 ~2초간 추론 입력이 불완전 → 초기 인식 지연.
+	// STRIDE 단위로 윈도우가 완전히 찰 때까지 선충전 (기존 슬라이드 패턴과 동일).
+	for (int filled = 0; filled < AUDIO_SAMPLES; filled += AUDIO_STRIDE) {
+		get_audio_data(audio_inf + AUDIO_SAMPLES, AUDIO_STRIDE);
+		if (wait_for_audio()) {
+			LOG_ERR("hal_get_audio_data failed during prefill");
+			return false;
+		}
+		std::copy(audio_inf + AUDIO_STRIDE, audio_inf + AUDIO_STRIDE + AUDIO_SAMPLES,
+		          audio_inf);
+	}
 	// Start first fill of final stride section of buffer
 	get_audio_data(audio_inf + AUDIO_SAMPLES, AUDIO_STRIDE);
 
