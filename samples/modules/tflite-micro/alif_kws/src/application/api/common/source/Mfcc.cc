@@ -255,7 +255,7 @@ std::vector<float> MFCC::MfccCompute(const std::vector<int16_t> &audioData)
 	/* Take DCT. Uses matrix mul. */
 	for (size_t i = 0, j = 0; i < mfccOut.size(); ++i, j += this->m_params.m_numFbankBins) {
 		*ptrMfcc++ = math::MathUtils::DotProductF32(ptrDct + j, ptrMel,
-							    this->m_params.m_numFbankBins);
+                                                            this->m_params.m_numFbankBins);
 	}
 	return mfccOut;
 }

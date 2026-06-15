@@ -111,7 +111,7 @@ namespace audio {
             for (size_t i = 0, j = 0; i < mfccOut.size(); ++i, j += numFbankBins) {
 
                 float sum = math::MathUtils::DotProductF32(this->m_dctMatrix.data() + j, this->m_melEnergies.data(), numFbankBins);
-
+                sum = std::min<float>(50.0f, std::max<float>(-50.0f, sum));  /* 26.6.9 added by jake to clamp */
                 /* Quantize to T. */
                 sum = std::round((sum / quantScale) + quantOffset);
                 mfccOut[i] = static_cast<T>(std::min<float>(std::max<float>(sum, minVal), maxVal));

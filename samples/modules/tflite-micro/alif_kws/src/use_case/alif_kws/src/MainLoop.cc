@@ -91,6 +91,11 @@ void main_loop()
 	constexpr bool bUseMenu = false;
 #endif
 
+#if defined(CONFIG_KWS_RECORD_MODE)
+    alif::app::RecordAudioHandler(caseContext);
+    return;
+#endif
+
 	/* Loop. */
 	do {
 		int menuOption = MENU_OPT_RUN_CONTINUOUS;

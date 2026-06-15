@@ -71,4 +71,20 @@ config THREAD_PRIORITY
 	int "Priority of audio thread"
 	default 0
 
+config KWS_MEASURE_MODE
+	bool "KWS measurement mode: send every window raw result + score to HP"
+	default n
+	help
+	  When enabled, bypasses send post-processing (VAD/threshold/blacklist/cooldown)
+	  and sends every inference window's top-1 (label_idx + score) to HP for
+	  data collection. For baseline measurement only; disable for normal operation.
+
+config KWS_RECORD_MODE
+	bool "KWS record mode: capture 1s audio on console trigger, dump to UART"
+	default n
+	help
+	  When enabled, replaces inference with a record loop: on console "rec"
+	  command, captures 1s of mic audio and dumps it over UART for PC-side
+	  wav saving. "quit" to exit. For training data collection only.
+
 source "Kconfig.zephyr"
